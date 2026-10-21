@@ -1,0 +1,331 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>DUDE'S ANIMATION RIPPING STATION PRO</title>
+<style>
+    body { 
+        margin: 0; padding: 0; background: #050000; overflow: hidden; 
+        display: flex; justify-content: center; align-items: center; height: 100vh;
+        font-family: 'Impact', 'Arial Black', sans-serif; color: #fff;
+    }
+    #app {
+        width: 95vw; height: 90vh;
+        background: #111;
+        border: 6px solid #ff0055;
+        box-shadow: 0 0 80px rgba(255, 0, 85, 0.6);
+        display: flex; flex-direction: column;
+        position: relative;
+    }
+    #header {
+        background: #ff0055; color: #fff; padding: 15px 20px;
+        font-size: 28px; font-weight: bold; display: flex; justify-content: space-between; align-items: center;
+        border-bottom: 6px solid #000; text-shadow: 3px 3px 0 #000;
+    }
+    #controls { display: flex; gap: 15px; align-items: center; }
+    
+    .btn {
+        background: #00ffff; color: #000; border: 4px solid #000; padding: 10px 20px;
+        font-size: 20px; font-weight: bold; cursor: pointer; font-family: 'Impact', sans-serif;
+        transform: skewX(-10deg); transition: 0.1s;
+    }
+    .btn:hover { background: #fff; transform: skewX(-10deg) scale(1.05); }
+    .btn-red { background: #ff0000; color: #fff; }
+    .btn-green { background: #00ff00; }
+    .btn-yellow { background: #ffff00; }
+
+    #canvasContainer {
+        flex: 1; background: #000; position: relative; overflow: hidden;
+        border-bottom: 4px solid #444;
+    }
+    canvas { display: block; width: 100%; height: 100%; cursor: crosshair; }
+
+    #uiOverlay {
+        position: absolute; top: 20px; left: 20px; pointer-events: none;
+        text-shadow: 3px 3px 0 #000;
+    }
+    #modeDisplay { font-size: 36px; color: #00ffff; margin-bottom: 10px; }
+    #speedDisplay { font-size: 28px; color: #ffff00; margin-bottom: 10px; }
+    #recIndicator { 
+        font-size: 30px; color: #ff0000; display: none; 
+        animation: blink 0.5s infinite; 
+    }
+    @keyframes blink { 50% { opacity: 0; } }
+
+    #footer {
+        padding: 15px; background: #1a1a1a; display: flex; justify-content: space-between; align-items: center;
+        border-top: 4px solid #444;
+    }
+    .instructions { font-size: 18px; color: #aaa; line-height: 1.4; }
+    .instructions span { color: #ffff00; font-weight: bold; }
+</style>
+</head>
+<body>
+
+<div id="app">
+    <div id="header">
+        <div>DUDE'S ANIMATION RIPPING STATION PRO.exe</div>
+        <div id="controls">
+            <input type="file" id="imgInput" accept="image/*" style="display:none">
+            <button class="btn" onclick="document.getElementById('imgInput').click()">UPLOAD IMAGE!</button>
+            <button class="btn btn-yellow" id="resetBtn">RESET!</button>
+            <button class="btn btn-green" id="recBtn">START RECORDING!</button>
+            <button class="btn btn-red" id="stopBtn" style="display:none;">STOP & DOWNLOAD!</button>
+        </div>
+    </div>
+    
+    <div id="canvasContainer">
+        <canvas id="animCanvas" width="1280" height="720"></canvas>
+        <div id="uiOverlay">
+            <div id="modeDisplay">MODE: DRAG [Z]</div>
+            <div id="speedDisplay">MOVE SPEED: 10 [+/-]</div>
+            <div id="recIndicator">● REC</div>
+        </div>
+    </div>
+
+    <div id="footer">
+        <div class="instructions">
+            PRESS <span>Z</span> TO CYCLE: DRAG -> STRETCH -> SPIN<br>
+            PRESS <span>ARROWS</span> TO MOVE | <span>+/-</span> TO CHANGE SPEED<br>
+            IN STRETCH MODE: DRAG THE 4 GLOWING HANDLES TO DISTORT!
+        </div>
+        <div class="instructions" id="statusText">NO IMAGE LOADED BAKA!</div>
+    </div>
+</div>
+
+<script>
+const canvas = document.getElementById('animCanvas');
+const ctx = canvas.getContext('2d');
+const imgInput = document.getElementById('imgInput');
+const recBtn = document.getElementById('recBtn');
+const stopBtn = document.getElementById('stopBtn');
+const resetBtn = document.getElementById('resetBtn');
+const modeDisplay = document.getElementById('modeDisplay');
+const speedDisplay = document.getElementById('speedDisplay');
+const recIndicator = document.getElementById('recIndicator');
+const statusText = document.getElementById('statusText');
+
+// --- STATE ---
+let img = null;
+let posX = 0, posY = 0;
+let imgW = 0, imgH = 0;
+let rotation = 0;
+let moveSpeed = 10;
+let mode = 0; // 0: DRAG, 1: STRETCH, 2: SPIN
+const modes = ['DRAG', 'STRETCH', 'SPIN'];
+const modeColors = ['#00ffff', '#00ff00', '#ff00ff'];
+
+let isDragging = false;
+let activeHandle = 0; // 0: none, 1: right, 2: left, 3: bottom, 4: top
+let lastMouseX = 0, lastMouseY = 0;
+
+let mediaRecorder, recordedChunks = [], isRecording = false;
+const keys = {};
+
+// --- UPLOAD & AUTO-FIT ---
+imgInput.addEventListener('change', (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (event) => {
+        img = new Image();
+        img.onload = () => {
+            // AUTO-SHRINK TO FIT 80% OF SCREEN!
+            const maxW = canvas.width * 0.8;
+            const maxH = canvas.height * 0.8;
+            const fitScale = Math.min(maxW / img.width, maxH / img.height);
+            
+            imgW = img.width * fitScale;
+            imgH = img.height * fitScale;
+            
+            // CENTER IT PERFECTLY
+            posX = (canvas.width - imgW) / 2;
+            posY = (canvas.height - imgH) / 2;
+            rotation = 0;
+            
+            statusText.innerText = `LOADED: ${file.name} (FITTED TO SCREEN!)`;
+        };
+        img.src = event.target.result;
+    };
+    reader.readAsDataURL(file);
+    e.target.value = ''; // THE MAGIC FIX!
+});
+
+// --- RESET BUTTON ---
+resetBtn.addEventListener('click', () => {
+    if (!img) return;
+    const maxW = canvas.width * 0.8;
+    const maxH = canvas.height * 0.8;
+    const fitScale = Math.min(maxW / img.width, maxH / img.height);
+    imgW = img.width * fitScale;
+    imgH = img.height * fitScale;
+    posX = (canvas.width - imgW) / 2;
+    posY = (canvas.height - imgH) / 2;
+    rotation = 0;
+    playBeep(1000);
+});
+
+// --- DRAW LOOP ---
+function draw() {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    
+    // Grid
+    ctx.strokeStyle = '#1a1a1a'; ctx.lineWidth = 1;
+    for(let i=0; i<canvas.width; i+=50) { ctx.beginPath(); ctx.moveTo(i,0); ctx.lineTo(i,canvas.height); ctx.stroke(); }
+    for(let i=0; i<canvas.height; i+=50) { ctx.beginPath(); ctx.moveTo(0,i); ctx.lineTo(canvas.width,i); ctx.stroke(); }
+
+    if (img) {
+        const centerX = posX + imgW / 2;
+        const centerY = posY + imgH / 2;
+
+        ctx.save();
+        ctx.translate(centerX, centerY);
+        ctx.rotate(rotation);
+        ctx.drawImage(img, -imgW / 2, -imgH / 2, imgW, imgH);
+        ctx.restore();
+
+        // Draw Stretch Handles if in STRETCH mode
+        if (mode === 1) {
+            ctx.fillStyle = '#00ff00';
+            ctx.strokeStyle = '#000';
+            ctx.lineWidth = 3;
+            const handleSize = 24; // Bigger handles for easier clicking!
+            
+            // Right
+            ctx.fillRect(centerX + imgW/2 - handleSize/2, centerY - handleSize/2, handleSize, handleSize);
+            ctx.strokeRect(centerX + imgW/2 - handleSize/2, centerY - handleSize/2, handleSize, handleSize);
+            // Left
+            ctx.fillRect(centerX - imgW/2 - handleSize/2, centerY - handleSize/2, handleSize, handleSize);
+            ctx.strokeRect(centerX - imgW/2 - handleSize/2, centerY - handleSize/2, handleSize, handleSize);
+            // Bottom
+            ctx.fillRect(centerX - handleSize/2, centerY + imgH/2 - handleSize/2, handleSize, handleSize);
+            ctx.strokeRect(centerX - handleSize/2, centerY + imgH/2 - handleSize/2, handleSize, handleSize);
+            // Top
+            ctx.fillRect(centerX - handleSize/2, centerY - imgH/2 - handleSize/2, handleSize, handleSize);
+            ctx.strokeRect(centerX - handleSize/2, centerY - imgH/2 - handleSize/2, handleSize, handleSize);
+        }
+    } else {
+        ctx.fillStyle = '#444'; ctx.font = '40px Impact'; ctx.textAlign = 'center';
+        ctx.fillText('UPLOAD AN IMAGE TO START ANIMATING BAKA!', canvas.width/2, canvas.height/2);
+    }
+    requestAnimationFrame(draw);
+}
+draw();
+
+// --- INPUT HANDLING ---
+canvas.addEventListener('mousedown', (e) => {
+    if (!img) return;
+    const rect = canvas.getBoundingClientRect();
+    const mouseX = (e.clientX - rect.left) * (canvas.width / rect.width);
+    const mouseY = (e.clientY - rect.top) * (canvas.height / rect.height);
+    
+    lastMouseX = mouseX; lastMouseY = mouseY;
+
+    if (mode === 1) { // STRETCH MODE - CHECK HANDLES
+        const centerX = posX + imgW / 2;
+        const centerY = posY + imgH / 2;
+        const hs = 24; // handle size
+        
+        if (Math.abs(mouseX - (centerX + imgW/2)) < hs && Math.abs(mouseY - centerY) < hs) activeHandle = 1; // Right
+        else if (Math.abs(mouseX - (centerX - imgW/2)) < hs && Math.abs(mouseY - centerY) < hs) activeHandle = 2; // Left
+        else if (Math.abs(mouseX - centerX) < hs && Math.abs(mouseY - (centerY + imgH/2)) < hs) activeHandle = 3; // Bottom
+        else if (Math.abs(mouseX - centerX) < hs && Math.abs(mouseY - (centerY - imgH/2)) < hs) activeHandle = 4; // Top
+        else activeHandle = 0; 
+    } else {
+        isDragging = true;
+    }
+});
+
+canvas.addEventListener('mousemove', (e) => {
+    if (!img) return;
+    const rect = canvas.getBoundingClientRect();
+    const mouseX = (e.clientX - rect.left) * (canvas.width / rect.width);
+    const mouseY = (e.clientY - rect.top) * (canvas.height / rect.height);
+    const deltaX = mouseX - lastMouseX;
+    const deltaY = mouseY - lastMouseY;
+
+    if (mode === 0 && isDragging) { // DRAG
+        posX += deltaX; posY += deltaY;
+    } else if (mode === 1) { // STRETCH
+        if (activeHandle === 1) imgW += deltaX; // Right
+        else if (activeHandle === 2) { posX += deltaX; imgW -= deltaX; } // Left
+        else if (activeHandle === 3) imgH += deltaY; // Bottom
+        else if (activeHandle === 4) { posY += deltaY; imgH -= deltaY; } // Top
+    } else if (mode === 2 && isDragging) { // SPIN
+        rotation += deltaX * 0.01;
+    }
+
+    lastMouseX = mouseX; lastMouseY = mouseY;
+});
+
+canvas.addEventListener('mouseup', () => { isDragging = false; activeHandle = 0; });
+canvas.addEventListener('mouseleave', () => { isDragging = false; activeHandle = 0; });
+
+// --- KEYBOARD CONTROLS ---
+window.addEventListener('keydown', (e) => {
+    keys[e.key] = true;
+    
+    if (e.key.toLowerCase() === 'z') {
+        mode = (mode + 1) % 3;
+        modeDisplay.innerText = `MODE: ${modes[mode]} [Z]`;
+        modeDisplay.style.color = modeColors[mode];
+        playBeep(400 + mode * 200);
+    }
+    if (e.key === '+' || e.key === '=') { moveSpeed += 5; updateSpeed(); playBeep(800); }
+    if (e.key === '-' || e.key === '_') { moveSpeed = Math.max(1, moveSpeed - 5); updateSpeed(); playBeep(600); }
+});
+
+window.addEventListener('keyup', (e) => { keys[e.key] = false; });
+
+function updateSpeed() { speedDisplay.innerText = `MOVE SPEED: ${moveSpeed} [+/-]`; }
+
+setInterval(() => {
+    if (keys['ArrowUp']) posY -= moveSpeed;
+    if (keys['ArrowDown']) posY += moveSpeed;
+    if (keys['ArrowLeft']) posX -= moveSpeed;
+    if (keys['ArrowRight']) posX += moveSpeed;
+}, 16); 
+
+function playBeep(freq) {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const osc = ctx.createOscillator(); const gain = ctx.createGain();
+    osc.type = 'square'; osc.frequency.value = freq;
+    gain.gain.setValueAtTime(0.1, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.1);
+    osc.connect(gain); gain.connect(ctx.destination);
+    osc.start(); osc.stop(ctx.currentTime + 0.1);
+}
+
+// --- RECORDING ---
+recBtn.addEventListener('click', () => {
+    if (!img) { alert("DUDE LOL XD UPLOAD AN IMAGE FIRST!"); return; }
+    recordedChunks = [];
+    const stream = canvas.captureStream(60); 
+    mediaRecorder = new MediaRecorder(stream, { mimeType: 'video/webm' });
+    
+    mediaRecorder.ondataavailable = (e) => { if (e.data.size > 0) recordedChunks.push(e.data); };
+    mediaRecorder.onstop = () => {
+        const blob = new Blob(recordedChunks, { type: 'video/webm' });
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = `DUDE_ANIM_PRO_${Date.now()}.webm`;
+        a.click();
+        statusText.innerText = "VIDEO DOWNLOADED! CHECK YOUR FOLDER BAKA!";
+    };
+    
+    mediaRecorder.start(); isRecording = true;
+    recBtn.style.display = 'none'; stopBtn.style.display = 'block';
+    recIndicator.style.display = 'block';
+    statusText.innerText = "RECORDING... GO CRAZY DUDE!";
+});
+
+stopBtn.addEventListener('click', () => {
+    if (isRecording) {
+        mediaRecorder.stop(); isRecording = false;
+        recBtn.style.display = 'block'; stopBtn.style.display = 'none';
+        recIndicator.style.display = 'none';
+    }
+});
+</script>
+</body>
+</html>
